@@ -1,0 +1,8 @@
+boto3==1.6.7
+
+dash==0.21.0
+dash-renderer==0.11.3
+dash-html-components==0.9.0
+dash-core-components==0.21.0
+
+elementary==0.2.0

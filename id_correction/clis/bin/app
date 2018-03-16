@@ -1,0 +1,398 @@
+#!/usr/bin/env python
+# encoding: utf-8
+r"""
+Little viz tool for Watson frame.
+
+Usage:
+  app.py -f <frame_file>
+  app.py (-h | --help)
+
+Options:
+  -f <config_file>          The Watson frame file we want to visualize
+  -h --help                 Show this screen
+"""
+
+import json
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+import plotly.graph_objs as go
+from datetime import datetime
+from plotly.colors import DEFAULT_PLOTLY_COLORS
+
+from elementary import Annotations
+
+from id_correction.utils import (
+    get_signed_s3_url,
+    get_annotations_from_frames,
+    save_frames_from_annotations_dict
+)
+
+
+# App
+
+app = dash.Dash()
+
+
+external_css = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+
+for css in external_css:
+    app.css.append_css({"external_url": css})
+
+
+# Layout
+
+app.layout = html.Div(
+    children=[
+        html.Div(id='hidden-annotations', style={'display': 'none'}),
+
+        html.Div(dcc.Input(id='input-box', type='text')),
+        html.Button(id='load-button', children='Load'),
+        html.Div(id='hidden-load', style={'display': 'none'}),
+
+        html.Div(dcc.Input(id='current-id', type='text', value='')),
+        html.Div(dcc.Input(id='new-id', type='text', value='')),
+        html.Button(id='submit-button', children='Submit'),
+        html.Div(id='hidden-submit', style={'display': 'none'}),
+
+        dcc.Graph(id='display-images'),
+        html.Button('<<', id='move-10-backwards'),
+        html.Div(id='hidden-10-backwards', style={'display': 'none'}),
+        html.Button('<', id='move-1-backwards'),
+        html.Div(id='hidden-1-backwards', style={'display': 'none'}),
+        html.Button('>', id='move-1-forwards'),
+        html.Div(id='hidden-1-forwards', style={'display': 'none'}),
+        html.Button('>>', id='move-10-forwards'),
+        html.Div(id='hidden-10-forwards', style={'display': 'none'}),
+        dcc.Slider(
+            id='image-slider',
+            min=0,
+            max=0,
+            marks={str(0): str(0)},
+            value=0,
+            step=None
+        ),
+    ],
+)
+
+
+# Callback
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-load', 'children'),
+    inputs=[
+        dash.dependencies.Input('load-button', 'n_clicks'),
+    ]
+)
+def register_click_time(n_clicks):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-submit', 'children'),
+    inputs=[
+        dash.dependencies.Input('submit-button', 'n_clicks'),
+    ]
+)
+def register_click_time(n_clicks):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-annotations', 'children'),
+    inputs=[
+        dash.dependencies.Input('hidden-load', 'children'),
+        dash.dependencies.Input('hidden-submit', 'children'),
+    ],
+    state=[
+        dash.dependencies.State('input-box', 'value'),
+        dash.dependencies.State('current-id', 'value'),
+        dash.dependencies.State('new-id', 'value'),
+        dash.dependencies.State('image-slider', 'value'),
+    ]
+)
+def update_annotations(load, submit, ann_file, box_index, new_id, frame_index):
+    if ann_file is not None:
+        load = datetime.strptime(
+            json.loads(load)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+        submit = datetime.strptime(
+            json.loads(submit)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+        if load > submit:
+            ann = get_annotations_from_frames(ann_file)
+            ann_dict = ann.to_dict()
+        else:
+            ann = get_annotations_from_frames(ann_file)
+            bb = ann[frame_index][box_index]
+            current_id = bb.id
+            for frame in ann[frame_index:]:
+                for box in frame:
+                    if box.id == str(current_id):
+                        box._id = str(new_id)
+            ann_dict = ann.to_dict()
+            save_frames_from_annotations_dict(ann_dict, ann_file)
+        return json.dumps(ann_dict)
+    return None
+
+
+@app.callback(
+    output=dash.dependencies.Output('image-slider', 'max'),
+    inputs=[
+        dash.dependencies.Input('hidden-annotations', 'children'),
+    ]
+)
+def update_slider(value):
+    if value is not None:
+        ann = Annotations.init_from_dict(json.loads(value))
+        return len(ann)
+    return 0
+
+
+@app.callback(
+    output=dash.dependencies.Output('image-slider', 'marks'),
+    inputs=[
+        dash.dependencies.Input('hidden-annotations', 'children'),
+    ]
+)
+def update_slider(value):
+    if value is not None:
+        ann = Annotations.init_from_dict(json.loads(value))
+        return {str(i): str(i) for i in range(len(ann))}
+    return {str(0): str(0)}
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-10-backwards', 'children'),
+    inputs=[
+        dash.dependencies.Input('move-10-backwards', 'n_clicks'),
+    ]
+)
+def register_click_time(_):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-1-backwards', 'children'),
+    inputs=[
+        dash.dependencies.Input('move-1-backwards', 'n_clicks'),
+    ]
+)
+def register_click_time(_):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-1-forwards', 'children'),
+    inputs=[
+        dash.dependencies.Input('move-1-forwards', 'n_clicks'),
+    ]
+)
+def register_click_time(_):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('hidden-10-forwards', 'children'),
+    inputs=[
+        dash.dependencies.Input('move-10-forwards', 'n_clicks'),
+    ]
+)
+def register_click_time(_):
+    return json.dumps(
+        {
+            'timestamp': str(datetime.utcnow().strftime('%Y-%m-%dT%H.%M.%S'))
+        }
+    )
+
+
+@app.callback(
+    output=dash.dependencies.Output('image-slider', 'value'),
+    inputs=[
+        dash.dependencies.Input('hidden-10-backwards', 'children'),
+        dash.dependencies.Input('hidden-1-backwards', 'children'),
+        dash.dependencies.Input('hidden-1-forwards', 'children'),
+        dash.dependencies.Input('hidden-10-forwards', 'children'),
+    ],
+    state=[
+        dash.dependencies.State('image-slider', 'value'),
+        dash.dependencies.State('hidden-annotations', 'children'),
+    ]
+)
+def update_slider(backwards_10, backwards_1, forwards_1, forwards_10, index,
+                  value):
+    if value is not None:
+        backwards_10 = datetime.strptime(
+            json.loads(backwards_10)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+        backwards_1 = datetime.strptime(
+            json.loads(backwards_1)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+        forwards_1 = datetime.strptime(
+            json.loads(forwards_1)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+        forwards_10 = datetime.strptime(
+            json.loads(forwards_10)['timestamp'],
+            '%Y-%m-%dT%H.%M.%S'
+        )
+
+        max_times = max([backwards_10, backwards_1, forwards_1, forwards_10])
+        ann = Annotations.init_from_dict(json.loads(value))
+        last = len(ann) - 1
+
+        if max_times == backwards_10:
+            new_index = index - 10
+            if new_index < 0:
+                return last
+            else:
+                return new_index
+        elif max_times == backwards_1:
+            new_index = index - 1
+            if new_index < 0:
+                return last
+            else:
+                return new_index
+        elif max_times == forwards_1:
+            new_index = index + 1
+            if new_index > last:
+                return 0
+            else:
+                return new_index
+        elif max_times == forwards_10:
+            new_index = index + 10
+            if new_index > last:
+                return 0
+            else:
+                return new_index
+    return 0
+
+
+@app.callback(
+    output=dash.dependencies.Output('display-images', 'figure'),
+    inputs=[
+        dash.dependencies.Input('image-slider', 'value'),
+    ],
+    state=[
+        dash.dependencies.State('hidden-annotations', 'children'),
+    ]
+)
+def update_images(index, value):
+    if value is not None:
+        ann = Annotations.init_from_dict(json.loads(value))
+        frame = ann[index]
+
+        x = []
+        y = []
+        text = []
+        for box in frame:
+            x.append(box.center[0])
+            y.append(box.center[1])
+            text.append('id: {}'.format(box.id))
+
+        return {
+            'data': [
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    text=text,
+                    mode='text',
+                    hoverinfo='text',
+                    textposition='middle center',
+                    textfont={'color': 'red'}
+                )
+            ],
+            'layout': go.Layout(
+                hovermode='closest',
+                autosize=True,
+                # width=920+460,
+                height=540 + 270,
+                margin={'l': 40, 'b': 40, 't': 40, 'r': 40},
+                legend={'x': 1, 'y': 1},
+                xaxis=dict(
+                    autorange=True,
+                    showgrid=False,
+                    zeroline=False,
+                    showline=False,
+                    autotick=True,
+                    ticks='',
+                    showticklabels=False
+                ),
+                yaxis=dict(
+                    autorange='reversed',
+                    scaleanchor="x",
+                    showgrid=False,
+                    zeroline=False,
+                    showline=False,
+                    autotick=True,
+                    ticks='',
+                    showticklabels=False
+                ),
+                shapes=[
+                    dict(
+                        type='rect',
+                        x0=box.x,
+                        y0=box.y,
+                        x1=box.x + box.width,
+                        y1=box.y + box.height,
+                        line={'color': DEFAULT_PLOTLY_COLORS[int(box.id) % 10]}
+                    ) for box in frame
+                ],
+                images=[
+                    dict(
+                        source=get_signed_s3_url(frame.image_path),
+                        xref='x',
+                        yref='y',
+                        x=0,
+                        y=0,
+                        sizex=frame.metadata['image_width'],
+                        sizey=frame.metadata['image_height'],
+                        xanchor='left',
+                        yanchor='top',
+                        sizing='stretch',
+                        layer='below'
+                    )
+                ]
+            )
+        }
+    return {}
+
+
+@app.callback(
+    output=dash.dependencies.Output('current-id', 'value'),
+    inputs=[
+        dash.dependencies.Input('display-images', 'hoverData'),
+    ]
+)
+def update_annotations(click_data):
+    if click_data is not None:
+        return click_data['points'][0]['pointNumber']
+    return ""
+
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
